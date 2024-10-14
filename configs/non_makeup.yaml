@@ -1,0 +1,4 @@
+_BASE_: base.yaml
+PROJECT_DIR: runs/non_makeup
+TRAIN:
+  MAKEUP: false

@@ -1,0 +1,9 @@
+_BASE_: base.yaml
+PROJECT_DIR: runs/for_eval_only
+MODEL:
+  LABEL_DIM: 2
+TRAIN:
+  ROOT: ["data/mtdataset/images", "data/beautyface/images"]
+  BATCH_SIZE: 4
+  GRADIENT_ACCUMULATION_STEPS: 8
+  MAX_ITER: 350000

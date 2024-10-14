@@ -1,0 +1,3 @@
+TRAIN:
+  ROOT: ["data/mtdataset/images"]
+  MIXED_PRECISION: "fp16"

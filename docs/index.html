@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="description" content="MAD: Makeup All-in-One with Cross-Domain Diffusion Model">
+  <meta name="keywords"
+    content="makeup transfer; deep learning; makeup-all-in-once, beautifier, makeup removal, text-to-makeup">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Makeup All in Once</title>
+  <!-- Global site tag (gtag.js) - Google Analytics -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-PYVRSFMDRL"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+
+    function gtag() {
+      dataLayer.push(arguments);
+    }
+
+    gtag('js', new Date());
+
+    gtag('config', 'G-PYVRSFMDRL');
+  </script>
+
+  <link href="https://fonts.googleapis.com/css?family=Google+Sans|Noto+Sans|Castoro" rel="stylesheet">
+  <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.5.0/css/font-awesome.min.css">
+
+  <link rel="stylesheet" href="./static/css/bulma.min.css">
+  <link rel="stylesheet" href="./static/css/bulma-carousel.min.css">
+  <link rel="stylesheet" href="./static/css/bulma-slider.min.css">
+  <link rel="stylesheet" href="./static/css/fontawesome.all.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css">
+  <link rel="stylesheet" href="./static/css/index.css">
+  <link rel="icon" href="./static/images/favicon.png">
+
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+  <script defer src="./static/js/fontawesome.all.min.js"></script>
+  <script src="./static/js/bulma-carousel.min.js"></script>
+  <script src="./static/js/bulma-slider.min.js"></script>
+  <script src="./static/js/index.js"></script>
+</head>
+<style>
+  .best {
+    background-color: rgb(255, 138, 138, 0.7);
+  }
+
+  .second-best {
+    background-color: rgb(255, 145, 0, 0.6);
+  }
+
+  #btt-bttn {
+    display: inline-block;
+    background-color: #209cee;
+    width: 50px;
+    height: 50px;
+    text-align: center;
+    border-radius: 4px;
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    transition: background-color .3s,
+      opacity .5s, visibility .5s;
+    opacity: 0;
+    visibility: hidden;
+    z-index: 1000;
+  }
+
+  #btt-bttn::after {
+    content: "\f077";
+    font-family: FontAwesome;
+    font-weight: normal;
+    font-style: normal;
+    font-size: 2em;
+    line-height: 50px;
+    color: #fff;
+  }
+
+  #btt-bttn:hover {
+    cursor: pointer;
+    background-color: #333;
+  }
+
+  #btt-bttn:active {
+    background-color: #555;
+  }
+
+  #btt-bttn.show {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  ol.citation>li::marker {
+    content: "[" counter(list-item) "] ";
+  }
+</style>
+
+<body>
+  <a id="btt-bttn"></a>
+  <section class="hero">
+    <div class="hero-body">
+      <div class="container is-max-desktop">
+        <div class="columns is-centered">
+          <div class="column has-text-centered">
+            <h1 class="title is-2 publication-title">MAD: Makeup All-in-One with Cross-Domain Diffusion Model</h1>
+            <div class="is-size-5 publication-authors">
+              <span class="author-block">
+                <a href="https://github.com/Justin900429" target="_blank">Bo-Kai Ruan</a>,</span>
+              <span class="author-block">
+                <a href="https://basiclab.lab.nycu.edu.tw" target="_blank">Hong-Han Shuai</a>,
+              </span>
+              <div class="is-size-5 publication-authors">
+                <span class="author-block">National Yang Ming Chiao Tung University</span>
+              </div>
+            </div>
+            <div class="column has-text-centered">
+              <div class="publication-links">
+                <span class="link-block">
+                  <a href="#" class="external-link button is-normal is-rounded is-dark">
+                    <span class="icon">
+                      <i class="ai ai-arxiv"></i>
+                    </span>
+                    <span>arXiv [WIP]</span>
+                  </a>
+                </span>
+                <!-- Code Link. -->
+                <span class="link-block">
+                  <a href="https://github.com/basiclab/MAD" target="_blank"
+                    class="external-link button is-normal is-rounded is-dark">
+                    <span class="icon">
+                      <i class="fab fa-github"></i>
+                    </span>
+                    <span>Code</span>
+                  </a>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+  </section>
+
+  <section class="hero teaser">
+    <div class="container is-centered is-max-desktop">
+      <div class="hero-body">
+        <!-- <video id="teaser" autoplay muted loop playsinline height="100%"> -->
+        <!-- <source src="../Inference.gif" type="video/mp4"> -->
+        <img src="./static/images/teaser.svg" style=" display: block;
+  margin-left: auto;
+  margin-right: auto;" alt="this slowpoke moves" />
+        <br />
+
+        <!-- </video> -->
+        <h2 class="subtitle has-text-centered">
+          The proposed MAD framework achieves a range of applications, including (a) beauty filter, (b) makeup removal,
+          (c) text modification, (d) single-makeup transfer, (e) scale transfer, (f) component transfer, and (g)
+          multi-makeup
+          transfer.
+        </h2>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container is-max-desktop">
+      <!-- Abstract. -->
+      <div class="columns is-centered has-text-centered">
+        <div class="column is-four-fifths">
+          <h2 class="title is-3">Abstract</h2>
+          <div class="content has-text-justified">
+            <p>
+              Existing techniques often require designing multiple models to handle different inputs and align features
+              across domains for different makeup tasks, <i>e.g.</i>, beauty filter, makeup transfer, and makeup
+              removal, leading to increased complexity. Another limitation is the absence of text-guided makeup try-on,
+              which is more user-friendly without needing reference images. In this study, we make the first attempt to
+              use a single model for various makeup tasks. Specifically, we formulate different makeup tasks as
+              cross-domain translations and leverage a cross-domain diffusion model to accomplish all tasks. Unlike
+              existing methods that rely on separate encoder-decoder configurations or cycle-based mechanisms, we
+              propose using different domain embeddings to facilitate domain control. This allows for seamless domain
+              switching by merely changing embeddings with a single model, thereby reducing the reliance on additional
+              modules for different tasks. Moreover, to support precise text-to-makeup applications, we introduce the
+              MT-Text dataset by extending the MT dataset with textual annotations, significantly advancing the
+              practicality and applicability of makeup technologies.
+            </p>
+          </div>
+        </div>
+      </div>
+      <div class="columns is-centered has-text-centered">
+        <div class="column is-four-fifths">
+          <h2 class="title is-3">Core Idea</h2>
+          <img src="static/images/all_in_one_vis.svg" , alt="core idea"
+            style=" display: block; margin-left: auto; margin-right: auto;" />
+          <br />
+          <p>Each task is modeled as a translation problem between different domains. For text modification and makeup
+            transfer, guidance such as text or a reference image is provided to generate a specific style .</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+  <section class="section">
+    <div class="container is-max-desktop">
+      <h2 class="title is-3">✨ A. Translation Pipeline</h2>
+      <br />
+      <img src="static/images/pipeline.svg" , alt="pipeline"
+        style=" display: block; margin-left: auto; margin-right: auto;" />
+      <br />
+      <p>Illustration of the cross-domain diffusion pipeline for time step <i>t</i>. Initially, the pipeline generates a latent
+        code representing the source domain, which is subsequently used in the target domain generation to ensure detail
+        preservation. During the generation phase, a preserved mask can be applied to maintain non-facial regions or to
+        modify specific components.</p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container is-max-desktop">
+      <h2 class="title is-3">📸 B. Visualization</h2>
+      <div class="columns is-centered">
+        <div class="column is-6">
+          <h3 class="title is-4">B-1. Beauty Filter</h3>
+          <img src="static/images/non_to_makeup.svg" , alt="beauty filter"
+            style=" display: block; margin-left: auto; margin-right: auto; width: 100%;" />
+        </div>
+        <div class="column is-6">
+          <h3 class="title is-4">B-2. Makeup Removal</h3>
+          <img src="static/images/makeup_to_non.svg" , alt="makeup removal"
+            style=" display: block; margin-left: auto; margin-right: auto; width: 100%;" />
+        </div>
+      </div>
+      <div class="content">
+        <h3 class="title is-4">B-3. Scale and Combine with different makeup</h3>
+        <img src="static/images/scale_comp_combine.svg" , alt="scale and combine"
+          style=" display: block; margin-left: auto; margin-right: auto;" />
+        <br />
+        <p>
+          Makeup Transfer with different scales and styles. <strong>Top Left</strong>: Adjustable makeup scales.
+          <strong>Bottom
+            Left</strong>: Transfer intensities for individual components. <strong>Right</strong>: Combinations of
+          scales and styles from
+          different images for various components. Notations 'E', 'EB', 'F', and 'L' denote eyes, eyebrows,
+          face, and lips, respectively, with superscript numbers indicating the component scale.
+        </p>
+      </div>
+      <div class="content">
+        <h3 class="title is-4">B-4. Text Modification</h3>
+        <img src="static/images/text_modification.svg" , alt="text modification"
+          style=" display: block; margin-left: auto; margin-right: auto;" />
+        <br />
+        <p>Text modification for non-makeup (<strong>top</strong>) and makeup (<strong>bottom</strong>) images. The images on the left
+          modify the entire facial region, while those on the right demonstrate modification with a brush mask.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container is-max-desktop">
+      <h2 class="title is-3">🗃️ C. MT-Text Dataset</h2>
+      <p>We enhance the MT dataset <a href="#cite-1">[1]</a> with textual annotations. Initial descriptions of makeup
+        for
+        eyes, face, and lips were generated using GPT-4 Vision, followed by manual verification to
+        correct inaccuracies. Users can get the dataset from <a href="https://github.com/basiclab/MAD/blob/main/data/mt_text_anno.json" target="_blank">here</a>. </p><br />
+      <div class="content is-centered has-text-centered">
+        <img src="static/images/text-example.svg" , alt="text annotation"
+          style=" display: block; margin-left: auto; margin-right: auto;" /><br />
+        <p>Examples of our extended text-to-makeup dataset.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="BibTeX">
+    <div class="container is-max-desktop content">
+      <h2 class="title">Reference</h2>
+      <ol class="citation">
+        <li>Li, T., Qian, R., Dong, C., Liu, S., Yan, Q., Zhu, W., Lin, L.: Beautygan: Instance-level
+          facial makeup transfer with deep generative adversarial network. In: ACM
+          International Conference on Multimedia. pp. 645–653 (2018)</li>
+      </ol>
+    </div>
+  </section>
+
+
+  <section class="section" id="BibTeX">
+    <div class="container is-max-desktop content">
+      <h2 class="title">BibTeX</h2>
+      <pre><code>
+            BobTex
+        </code></pre>
+    </div>
+  </section>
+
+
+  <footer class="footer">
+    <div class="container">
+      <div class="content has-text-centered">
+        <a class="icon-link" href="#">
+          <i class="fas fa-file-pdf"></i>
+        </a>
+        <a class="icon-link" target="_blank" href="https://github.com/basiclab/MAD" class="external-link" disabled>
+          <i class="fab fa-github"></i>
+        </a>
+      </div>
+      <div class="columns is-centered">
+        <div class="column is-8">
+          <div class="content">
+            <p class="footer-paragraph">
+              This page is adapted from the <a href="https://github.com/nerfies/nerfies.github.io">Nerfies project
+                page</a> and is licensed under a <a href="https://creativecommons.org/licenses/by-sa/4.0/">Creative
+                Commons Attribution-ShareAlike 4.0 International License</a>.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+</body>
+<script>
+  var btn = $('#btt-bttn');
+
+  $(window).scroll(function () {
+    if ($(window).scrollTop() > 300) {
+      btn.addClass('show');
+    } else {
+      btn.removeClass('show');
+    }
+  });
+
+  btn.on('click', function (e) {
+    e.preventDefault();
+    $('html, body').animate({ scrollTop: 0 }, '300');
+  });
+
+  $('ol.citation > li').each(function (i, el) {
+    el.id = "cite-" + (i + 1);
+  });
+</script>
+
+</html>
