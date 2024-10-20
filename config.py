@@ -17,10 +17,16 @@ def create_cfg():
     cfg.MODEL.IN_CHANNELS = 3
     cfg.MODEL.OUT_CHANNELS = cfg.MODEL.IN_CHANNELS
     cfg.MODEL.LAYERS_PER_BLOCK = 2
-    cfg.MODEL.BASE_DIM = 192
+    cfg.MODEL.BASE_DIM = 128
     cfg.MODEL.LAYER_SCALE = [1, 1, 2, 2, 4, 4]
     cfg.MODEL.PRETRAINED = None  # "pretrained/pretrained.pkl"
     cfg.MODEL.LABEL_DIM = 0
+    cfg.MODEL.DOWN_BLOCK_TYPE = (["CrossAttnDownBlock2D"] * (len(cfg.MODEL.LAYER_SCALE) - 1)) + [
+        "DownBlock2D"
+    ]
+    cfg.MODEL.UP_BLOCK_TYPE = (["CrossAttnUpBlock2D"] * (len(cfg.MODEL.LAYER_SCALE) - 1)) + [
+        "UpBlock2D"
+    ]
 
     # ###### Training set ######
     cfg.TRAIN = CN()
@@ -33,9 +39,10 @@ def create_cfg():
     cfg.TRAIN.SAVE_INTERVAL = 10000
     cfg.TRAIN.SAMPLE_INTERVAL = 10000
     cfg.TRAIN.ROOT = None
+    cfg.TRAIN.TEXT_LABEL_PATH = None
 
     # Training iteration
-    cfg.TRAIN.BATCH_SIZE = 4
+    cfg.TRAIN.BATCH_SIZE = 2
     cfg.TRAIN.NUM_WORKERS = 4
     cfg.TRAIN.MAX_ITER = 350000
     cfg.TRAIN.GRADIENT_ACCUMULATION_STEPS = 16
@@ -64,7 +71,7 @@ def create_cfg():
 
     # ======= Evaluation set =======
     cfg.EVAL = CN()
-    cfg.EVAL.BATCH_SIZE = 16
+    cfg.EVAL.BATCH_SIZE = 4
     cfg.EVAL.SAMPLE_STEPS = 1000
     cfg.EVAL.ETA = 0.01
     cfg.EVAL.REFINE_STEPS = 0

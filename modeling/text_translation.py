@@ -3,10 +3,9 @@ from typing import List, Optional, Tuple, Union
 import numpy as np
 import torch
 import torchvision.transforms as T
-from diffusers import StableDiffusionPipeline
-from diffusers.models import UNet2DConditionModel
 from PIL import Image
 from tqdm import tqdm
+from transformers import CLIPTokenizer
 
 from .scheduler import CustomDDIMScheduler, CustomDDPMScheduler
 
@@ -32,30 +31,31 @@ class TextTranslationDiffusion:
     NUM_TO_COMP = [9, 13, 4, 8, 1, 6, 2, 7]  # order matters
     UNCON_TOKEN = "no or light makeup"
 
-    def __init__(self, img_size, scheduler, device, model_path=None, sample_steps=1000):
-        # Finetuned from "runwayml/stable-diffusion-v1-5"
-        if model_path is not None:
-            unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(f"{model_path}/unet")
-            pipe = StableDiffusionPipeline.from_pretrained(
-                "runwayml/stable-diffusion-v1-5", unet=unet
-            )
-        else:
-            pipe = StableDiffusionPipeline.from_pretrained("runwayml/stable-diffusion-v1-5")
-        pipe.scheduler = SCHEDULER_FUNC[scheduler].from_config(pipe.scheduler.config)
-        pipe.enable_xformers_memory_efficient_attention()
-        pipe.to(device)
-        pipe.safety_checker = None
-        self.pipe: StableDiffusionPipeline = pipe
+    def __init__(self, cfg, device):
         self.device = device
-        self.img_size = img_size
+        self.cfg = cfg
+        self.eta = cfg.EVAL.ETA
         self.transform = T.Compose(
             [
-                T.Resize((self.img_size, self.img_size)),
+                T.Resize((cfg.TRAIN.IMAGE_SIZE, cfg.TRAIN.IMAGE_SIZE)),
                 T.ToTensor(),
                 T.Normalize([0.5], [0.5]),
             ]
         )
-        self.sample_steps = sample_steps
+        self.img_size = (cfg.TRAIN.IMAGE_SIZE, cfg.TRAIN.IMAGE_SIZE)
+        self.sample_steps = cfg.EVAL.SAMPLE_STEPS
+        self.tokenizer = CLIPTokenizer.from_pretrained(
+            "CompVis/stable-diffusion-v1-4", subfolder="tokenizer"
+        )
+        self.scheduler: Union[CustomDDIMScheduler, CustomDDPMScheduler] = SCHEDULER_FUNC[
+            cfg.EVAL.SCHEDULER
+        ](
+            num_train_timesteps=cfg.TRAIN.TIME_STEPS,
+            prediction_type=cfg.TRAIN.NOISE_SCHEDULER.PRED_TYPE,
+            beta_schedule=cfg.TRAIN.NOISE_SCHEDULER.TYPE,
+            beta_start=cfg.TRAIN.NOISE_SCHEDULER.BETA_START,
+            beta_end=cfg.TRAIN.NOISE_SCHEDULER.BETA_END,
+        )
 
     def process_image(self, image: Union[str, torch.Tensor]):
         if isinstance(image, str):
@@ -104,59 +104,66 @@ class TextTranslationDiffusion:
         return mask
 
     def process_text(self, text):
-        tokens = self.pipe.tokenizer(
+        tokens = self.tokenizer(
             text,
             padding="max_length",
-            max_length=self.pipe.tokenizer.model_max_length,
+            max_length=self.tokenizer.model_max_length,
             truncation=True,
             return_tensors="pt",
             return_overflowing_tokens=True,
         )
-        embedding = self.pipe.text_encoder(tokens.input_ids.to(self.device))[0]
+        embedding = self.text_encoder(tokens.input_ids.to(self.device))[0]
         return tokens, embedding
 
     def sample_xt(
         self, input_: torch.Tensor, timesteps: torch.LongTensor, mask: Optional[torch.Tensor] = None
     ):
         noise = torch.randn_like(input_)
-        add_noise_image = self.pipe.scheduler.add_noise(input_, noise, timesteps)
+        add_noise_image = self.scheduler.add_noise(input_, noise, timesteps)
         if mask is not None:
             add_noise_image = mask * add_noise_image + (1 - mask) * input_
         return add_noise_image
 
     def modify_with_text(
         self,
+        model: torch.nn.Module,
+        source_label: int,
         image: torch.Tensor,
         prompt: Union[str, List[str]],
         original_prompt: Optional[Union[str, List[str]]] = None,
         mask: Optional[torch.Tensor] = None,
         guidance_scale: float = 7.5,
         encode_scale: float = 1.0,
-        eta: float = 0.1,
         dilate_eye: bool = True,
         start_from_step: int = -1,
     ):
         image = self.process_image(image)
+        source_label = (
+            torch.nn.functional.one_hot(torch.LongTensor([source_label]), 2).to(self.device).float()
+        )
+
         height, width = image.shape[-2:]
         mask = self.process_mask(
             mask,
-            (width // self.pipe.vae_scale_factor, height // self.pipe.vae_scale_factor),
+            (width, height),
             dilate_eye=dilate_eye,
         )
 
         with torch.no_grad():
             eps_list = self.encode(
                 image,
-                eta,
+                model,
+                source_label=source_label,
                 start_from_step=start_from_step,
                 encode_scale=encode_scale,
                 original_prompt=original_prompt,
             )
             modified_image = self.generate(
+                model,
+                source_label,
                 prompt,
                 eps_list,
                 guidance_scale=guidance_scale,
-                eta=eta,
                 start_from_step=start_from_step,
                 original_image=image,
                 mask=mask,
@@ -170,18 +177,35 @@ class TextTranslationDiffusion:
     def encode(
         self,
         image: torch.Tensor,
-        eta: float,
+        model: torch.nn.Module,
+        source_label: torch.Tensor,
         start_from_step: int = -1,
         encode_scale: float = 1.0,
         original_prompt: Optional[Union[str, List[str]]] = None,
     ):
         encode_prompt = original_prompt or [self.UNCON_TOKEN] * image.shape[0]
-        prompt_embeds, negative_prompt_embeds = self.pipe.encode_prompt(
-            encode_prompt, self.device, 1, True
+        tokens_unconditional = (
+            self.tokenizer(
+                "",
+                padding="max_length",
+                max_length=self.tokenizer.model_max_length,
+                truncation=True,
+                return_tensors="pt",
+            )
+            .input_ids.repeat(image.shape[0], 1, 1)
+            .to(self.device)
         )
-        text_embedding = torch.cat([negative_prompt_embeds, prompt_embeds])
-        image = self.pipe.vae.encode(image.to(text_embedding.dtype)).latent_dist.sample()
-        image = image * self.pipe.vae.config.scaling_factor
+        tokens_conditional = (
+            self.tokenizer(
+                encode_prompt,
+                padding="max_length",
+                max_length=self.tokenizer.model_max_length,
+                truncation=True,
+                return_tensors="pt",
+            )
+            .input_ids.repeat(image.shape[0], 1, 1)
+            .to(self.device)
+        )
 
         initial_noise_steps = start_from_step if start_from_step != -1 else self.sample_steps
         x_T = self.sample_xt(image, torch.LongTensor([initial_noise_steps - 1]).to(self.device))
@@ -189,31 +213,32 @@ class TextTranslationDiffusion:
         noise_output = x_T
         start_from_step = -start_from_step if start_from_step != -1 else 0
 
-        # Stable diffusion has step_offset 1
-        self.pipe.scheduler.set_timesteps(self.sample_steps, device=self.device)
-        for timestep in tqdm(self.pipe.scheduler.timesteps[start_from_step:-1], desc="encode"):
-            self.pipe.scheduler.config.prediction_type = "sample"
-            noise_output_next = self.pipe.scheduler.step(
-                image, timestep - 1, noise_output, eta=eta
+        self.scheduler.set_timesteps(self.sample_steps, device=self.device)
+        for timestep in tqdm(self.scheduler.timesteps[start_from_step:-1], desc="encode"):
+            self.scheduler.config.prediction_type = "sample"
+            noise_output_next = self.scheduler.step(
+                image, timestep, noise_output, eta=self.eta
             ).prev_sample
 
-            latent_model_input = torch.cat([noise_output] * 2)
-            latent_model_input = self.pipe.scheduler.scale_model_input(
-                latent_model_input, timestep - 1
-            )
-            model_output = self.pipe.unet(
-                latent_model_input,
-                timestep,
-                encoder_hidden_states=text_embedding,
-                return_dict=False,
-            )[0]
-            model_output_uncond, model_output_text = model_output.chunk(2)
+            with torch.autocast(device_type="cuda", dtype=torch.float16):
+                model_output_uncond = model(
+                    noise_output,
+                    timestep,
+                    text=tokens_unconditional,
+                    class_labels=source_label,
+                )
+                model_output_text = model(
+                    noise_output,
+                    timestep,
+                    text=tokens_conditional,
+                    class_labels=source_label,
+                )
             model_output = model_output_uncond + encode_scale * (
                 model_output_text - model_output_uncond
             )
-            self.pipe.scheduler.config.prediction_type = "epsilon"
-            eps = self.pipe.scheduler.compute_eps(
-                model_output, timestep - 1, noise_output, noise_output_next, eta=eta
+            self.scheduler.config.prediction_type = "epsilon"
+            eps = self.scheduler.compute_eps(
+                model_output, timestep, noise_output, noise_output_next, eta=self.eta
             )
             return_latent_list.append(eps)
             noise_output = noise_output_next
@@ -222,59 +247,37 @@ class TextTranslationDiffusion:
     @torch.no_grad()
     def generate(
         self,
+        model: torch.nn.Module,
+        source_label: torch.Tensor,
         prompt: List[str],
         eps_list: Optional[List[torch.Tensor]] = None,
         guidance_scale: float = 7.5,
-        eta: float = 0.0,
         num_images: int = 1,
         original_image: Optional[torch.Tensor] = None,
         start_from_step: int = -1,
         mask: Optional[torch.Tensor] = None,
+        normalize: bool = True,
     ):
-        if original_image is not None:
-            original_image = self.pipe.vae.encode(
-                original_image.to(eps_list.dtype)
-            ).latent_dist.sample()
-            original_image = original_image * self.pipe.vae.config.scaling_factor
-
         assert len(prompt) == num_images
 
-        tokens_unconditional = self.pipe.tokenizer(
+        tokens_unconditional = self.tokenizer(
             "",
             padding="max_length",
-            max_length=self.pipe.tokenizer.model_max_length,
+            max_length=self.tokenizer.model_max_length,
             truncation=True,
             return_tensors="pt",
-            return_overflowing_tokens=True,
-        )
-        embedding_unconditional = self.pipe.text_encoder(
-            tokens_unconditional.input_ids.to(self.device)
-        )[0]
-        tokens_conditional = self.pipe.tokenizer(
+        ).input_ids.to(self.device)
+        tokens_conditional = self.tokenizer(
             prompt,
             padding="max_length",
-            max_length=self.pipe.tokenizer.model_max_length,
+            max_length=self.tokenizer.model_max_length,
             truncation=True,
             return_tensors="pt",
-            return_overflowing_tokens=True,
-        )
-        embedding_conditional = self.pipe.text_encoder(
-            tokens_conditional.input_ids.to(self.device)
-        )[0]
+        ).input_ids.to(self.device)
 
-        noise_output = (
-            eps_list[:, 0]
-            if eps_list is not None
-            else torch.randn(
-                (
-                    num_images,
-                    self.pipe.unet.config.in_channels,
-                    self.img_size // self.pipe.vae_scale_factor,
-                    self.img_size // self.pipe.vae_scale_factor,
-                ),
-                device=self.device,
-                dtype=embedding_conditional.dtype,
-            )
+        noise_output = torch.randn(
+            (num_images, 3, *self.img_size),
+            device=self.device,
         )
         if eps_list is not None:
             assert eps_list.shape[1] == (
@@ -282,45 +285,41 @@ class TextTranslationDiffusion:
             )
             noise_output = eps_list[:, 0]
             eps_list = eps_list[:, 1:]
-        self.pipe.scheduler.set_timesteps(self.sample_steps, device=self.device)
+        self.scheduler.set_timesteps(self.sample_steps, device=self.device)
         start_from_step = -start_from_step if start_from_step != -1 else 0
         # StableDiffusion has `step_offset` 1
         for it, timestep in enumerate(
-            tqdm(self.pipe.scheduler.timesteps[start_from_step:], desc="generate")
+            tqdm(self.scheduler.timesteps[start_from_step:], desc="generate")
         ):
-            latent_model_input = self.pipe.scheduler.scale_model_input(noise_output, timestep - 1)
-            model_output_uncond = self.pipe.unet(
-                latent_model_input,
-                timestep,
-                encoder_hidden_states=embedding_unconditional,
-                return_dict=False,
-            )[0]
-            model_output_text = self.pipe.unet(
-                latent_model_input,
-                timestep,
-                encoder_hidden_states=embedding_conditional,
-                return_dict=False,
-            )[0]
+            with torch.autocast(device_type="cuda", dtype=torch.float16):
+                model_output_uncond = model(
+                    noise_output,
+                    timestep,
+                    text=tokens_unconditional,
+                    class_labels=source_label,
+                )
+                model_output_text = model(
+                    noise_output,
+                    timestep,
+                    text=tokens_conditional,
+                    class_labels=source_label,
+                )
             model_output = model_output_uncond + guidance_scale * (
                 model_output_text - model_output_uncond
             )
-            noise_output = self.pipe.scheduler.step(
+            noise_output = self.scheduler.step(
                 model_output,
-                timestep - 1,
+                timestep,
                 noise_output,
                 variance_noise=(
-                    eps_list[:, it] if ((eps_list is not None) and (timestep - 1) > 0) else None
+                    eps_list[:, it] if ((eps_list is not None) and timestep > 0) else None
                 ),
-                eta=eta,
+                eta=self.eta,
                 original_image=original_image,
                 mask=mask,
             ).prev_sample
 
-        image = self.pipe.vae.decode(
-            noise_output / self.pipe.vae.config.scaling_factor, return_dict=False
-        )[0]
-        do_denormalize = [True] * image.shape[0]
-        image = self.pipe.image_processor.postprocess(
-            image, output_type="pil", do_denormalize=do_denormalize
-        )
-        return image
+        noise_output = noise_output.clamp(-1, 1)
+        if normalize:
+            return (noise_output / 2 + 0.5).cpu()
+        return noise_output

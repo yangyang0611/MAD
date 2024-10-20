@@ -14,6 +14,7 @@ from PIL import Image
 from skimage.exposure import match_histograms
 from torchvision.transforms.functional import gaussian_blur
 from tqdm import tqdm
+from transformers import CLIPTokenizer
 
 from misc.constant import (
     DLIB_LANDMARKS,
@@ -185,6 +186,18 @@ class TranslationDiffusion:
         self.face_detector = dlib.get_frontal_face_detector()
         self.shape_predictor = dlib.shape_predictor("weights/shape_predictor_68_face_landmarks.dat")
 
+        tokenizer = CLIPTokenizer.from_pretrained(
+            "CompVis/stable-diffusion-v1-4", subfolder="tokenizer"
+        )
+        text_inputs = tokenizer(
+            "",
+            padding="max_length",
+            max_length=tokenizer.model_max_length,
+            truncation=True,
+            return_tensors="pt",
+        )
+        self.null_text = text_inputs.input_ids.unsqueeze(0).to(self.device)
+
     def process_image(self, image: Union[str, torch.Tensor]):
         if isinstance(image, str):
             image = Image.open(image).convert("RGB")
@@ -262,7 +275,7 @@ class TranslationDiffusion:
     def process_label(self, label: Union[int, torch.Tensor], batch_size: int):
         if label is not None and isinstance(label, int):
             label = torch.tensor(label, device=self.device)
-            label = torch.nn.functional.one_hot(label, self.num_classes)
+            label = torch.nn.functional.one_hot(label, self.num_classes).float()
             label = label.unsqueeze(0).repeat(batch_size, 1)
         return label
 
@@ -276,7 +289,12 @@ class TranslationDiffusion:
         noise_output = input_image.clone()
         self.scheduler.set_inverse_timesteps(self.sample_steps, device="cuda")
         for timestep in tqdm(self.scheduler.timesteps[:inverse_step], desc="inverse"):
-            model_output = model(noise_output, timestep.reshape(-1), class_label)
+            model_output = model(
+                noise_output,
+                timestep.reshape(-1),
+                text=self.null_text,
+                class_labels=class_label,
+            )
             noise_output = self.scheduler.ddim_inverse_step(
                 model_output, timestep, noise_output
             ).prev_sample
@@ -711,7 +729,12 @@ class TranslationDiffusion:
                 image, timestep, noise_output, eta=self.eta
             ).prev_sample
             with torch.autocast("cuda", dtype=torch.float16):
-                model_output = model(noise_output, timestep.reshape(-1), class_label)
+                model_output = model(
+                    noise_output,
+                    timestep.reshape(-1),
+                    text=self.null_text,
+                    class_labels=class_label,
+                )
             model_output = model_output.float()
             if return_noise:
                 return_noise_list.append(model_output)
@@ -797,7 +820,12 @@ class TranslationDiffusion:
                 extra_to_source = (source_mask > 0).unsqueeze(1).repeat(1, 3, 1, 1)
                 source_image[extra_to_source] = extra_image[extra_to_source]
             with torch.autocast(device_type="cuda", dtype=torch.float16):
-                model_output = model(noise_output, timestep.reshape(-1), class_label)
+                model_output = model(
+                    noise_output,
+                    timestep.reshape(-1),
+                    text=self.null_text,
+                    class_labels=class_label,
+                )
             model_output = model_output.float()
             noise_output = self.scheduler.step(
                 model_output,
@@ -824,7 +852,12 @@ class TranslationDiffusion:
 
                 noise_output = self.sample_xt(noise_output, start_time_step, mask=source_mask)
                 for timestep in self.scheduler.timesteps[-self.refine_steps :]:
-                    model_output = model(noise_output, timestep.reshape(-1), class_label)
+                    model_output = model(
+                        noise_output,
+                        timestep.reshape(-1),
+                        text=self.null_text,
+                        class_labels=class_label,
+                    )
                     noise_output = self.scheduler.step(
                         model_output,
                         timestep,

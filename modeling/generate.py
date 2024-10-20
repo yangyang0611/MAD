@@ -3,8 +3,6 @@ import torch
 import tqdm
 from PIL import Image
 
-from .model import EDMPrecond
-
 
 @torch.no_grad()
 def generate_image_grid(

@@ -1,7 +1,6 @@
 import argparse
 import datetime
 import gc
-import math
 import os
 import os.path as osp
 import time
@@ -10,13 +9,14 @@ import accelerate
 import torch
 import torch.optim as optim
 import torchvision.transforms as T
+from accelerate.utils import GradientAccumulationPlugin
 from diffusers.optimization import get_constant_schedule_with_warmup
 from diffusers.schedulers import DDIMScheduler, DDPMScheduler
 from diffusers.training_utils import EMAModel
 from diffusers.utils import make_image_grid, numpy_to_pil
 from loguru import logger
-from PIL import ImageEnhance
 from tqdm import tqdm
+from transformers import CLIPTokenizer
 
 from config import create_cfg, merge_possible_with_base, show_config
 from dataset import get_makeup_loader
@@ -38,22 +38,8 @@ def parse_args():
     return parser.parse_args()
 
 
-def img_enhance(img):
-    enh_con = ImageEnhance.Contrast(img)
-    con_factor = 0.9
-    enhance_image = enh_con.enhance(con_factor)
-
-    enh_bri = ImageEnhance.Brightness(enhance_image)
-    bri_factor = 1.05
-    enhance_image = enh_bri.enhance(bri_factor)
-
-    enh_col = ImageEnhance.Color(enhance_image)
-    color_factor = 0.99
-    return enh_col.enhance(color_factor)
-
-
-@torch.no_grad()
-def evaluate(cfg, unet, noise_scheduler, device, filename):
+@torch.inference_mode()
+def evaluate(cfg, unet, noise_scheduler, device, filename, accelerator):
     unet.eval()
     num_images = cfg.EVAL.BATCH_SIZE
     image_shape = (
@@ -64,15 +50,32 @@ def evaluate(cfg, unet, noise_scheduler, device, filename):
     )
     images = torch.randn(image_shape, device=device)
 
+    tokenizer = CLIPTokenizer.from_pretrained(
+        "CompVis/stable-diffusion-v1-4", subfolder="tokenizer"
+    )
+    text_inputs = tokenizer(
+        "",
+        padding="max_length",
+        max_length=tokenizer.model_max_length,
+        truncation=True,
+        return_tensors="pt",
+    )
+    text_input_ids = text_inputs.input_ids
+    text_input_ids = text_input_ids.repeat(num_images, 1, 1).to(device)
     if cfg.MODEL.LABEL_DIM > 0:
         labels = torch.Tensor([0] * (num_images // 2) + [1] * (num_images // 2)).long().to(device)
-        labels = torch.nn.functional.one_hot(labels[:num_images], cfg.MODEL.LABEL_DIM).to(device)
+        labels = (
+            torch.nn.functional.one_hot(labels[:num_images], cfg.MODEL.LABEL_DIM)
+            .squeeze()
+            .float()
+            .to(device)
+        )
     else:
         labels = None
 
     noise_scheduler.set_timesteps(cfg.EVAL.SAMPLE_STEPS, device=device)
-    for t in tqdm(noise_scheduler.timesteps):
-        model_output = unet(images, t.reshape(-1), class_labels=labels).float()
+    for t in tqdm(noise_scheduler.timesteps, disable=not accelerator.is_main_process):
+        model_output = unet(images, t.reshape(-1), text_input_ids, class_labels=labels).float()
         if cfg.EVAL.SCHEDULER == "ddim":
             images = noise_scheduler.step(
                 model_output, t, images, use_clipped_model_output=True, eta=cfg.EVAL.ETA
@@ -80,13 +83,14 @@ def evaluate(cfg, unet, noise_scheduler, device, filename):
         else:
             images = noise_scheduler.step(model_output, t, images).prev_sample
 
-    images = (images.to(torch.float32).clamp(-1, 1) + 1) / 2
-    images = numpy_to_pil(images.cpu().permute(0, 2, 3, 1).numpy())
-    images = [img_enhance(img) for img in images]
+    images = accelerator.gather([images])
+    if accelerator.is_main_process:
+        images = torch.cat(images, dim=0)
+        images = (images.to(torch.float32).clamp(-1, 1) + 1) / 2
+        images = numpy_to_pil(images.cpu().permute(0, 2, 3, 1).numpy())
 
-    square_size = int(math.sqrt(cfg.EVAL.BATCH_SIZE))
-    make_image_grid(images, rows=square_size, cols=square_size).save(filename)
-    logger.info(f"Save generated samples to {filename}...")
+        make_image_grid(images, cols=4, rows=len(images) // 4).save(filename)
+        logger.info(f"Save generated samples to {filename}...")
 
 
 def main(args):
@@ -100,10 +104,13 @@ def main(args):
     configuration = accelerate.utils.ProjectConfiguration(
         project_dir=cfg.PROJECT_DIR,
     )
+    plugin = GradientAccumulationPlugin(
+        sync_with_dataloader=False, num_steps=cfg.TRAIN.GRADIENT_ACCUMULATION_STEPS
+    )
     kwargs = accelerate.InitProcessGroupKwargs(timeout=datetime.timedelta(seconds=3600))
     accelerator = accelerate.Accelerator(
         kwargs_handlers=[kwargs],
-        gradient_accumulation_steps=cfg.TRAIN.GRADIENT_ACCUMULATION_STEPS,
+        gradient_accumulation_plugin=plugin,
         log_with=["aim"],
         project_config=configuration,
         mixed_precision=cfg.TRAIN.MIXED_PRECISION,
@@ -135,16 +142,16 @@ def main(args):
             logger.info(f"Load pretrained model from {cfg.MODEL.PRETRAINED}...")
 
         with accelerator.main_process_first():
-            weight = torch.load(cfg.MODEL.PRETRAINED, map_location=device)
+            weight = torch.load(cfg.MODEL.PRETRAINED, map_location="cpu")
         load_res = model.load_state_dict(weight["model"], strict=False)
         if accelerator.is_main_process:
             logger.info(f"Load result for model: {load_res}")
         del weight
-        gc.collect()
         torch.cuda.empty_cache()
+        gc.collect()
 
     ema_model = EMAModel(
-        model.parameters(),
+        [param for param in model.parameters() if param.requires_grad],
         decay=cfg.TRAIN.EMA_MAX_DECAY,
         use_ema_warmup=True,
         inv_gamma=cfg.TRAIN.EMA_INV_GAMMA,
@@ -163,32 +170,38 @@ def main(args):
     dataloader = get_makeup_loader(cfg, train=True, transforms=transforms)
 
     # Build optimizer
-    optimizer = optim.AdamW(model.parameters(), lr=cfg.TRAIN.LR, betas=(0.95, 0.999), eps=1e-7)
+    optimizer = optim.AdamW(
+        [param for param in model.parameters() if param.requires_grad],
+        lr=cfg.TRAIN.LR,
+        betas=(0.95, 0.999),
+        eps=1e-7,
+    )
     lr_scheduler = get_constant_schedule_with_warmup(
         optimizer=optimizer,
         num_warmup_steps=cfg.TRAIN.LR_WARMUP,
     )
 
+    start_iter = 0
+    if cfg.TRAIN.RESUME is not None:
+        assert osp.exists(cfg.TRAIN.RESUME), "Resume file not found."
+        with accelerator.main_process_first():
+            state_dict = torch.load(cfg.TRAIN.RESUME, map_location="cpu")
+            ema_model.load_state_dict(state_dict["ema_state_dict"])
+            if not args.generate_only:
+                model.load_state_dict(state_dict["state_dict"])
+                optimizer.load_state_dict(state_dict["optimizer"])
+                lr_scheduler.load_state_dict(state_dict["lr_scheduler"])
+                start_iter = state_dict["iter"] + 1
+        if accelerator.is_main_process:
+            logger.info(f"Resume checkpoint from {cfg.TRAIN.RESUME}...")
+        del state_dict
+        torch.cuda.empty_cache()
+        gc.collect()
+
     model, optimizer, lr_scheduler, dataloader = accelerator.prepare(
         model, optimizer, lr_scheduler, dataloader
     )
     ema_model.to(accelerator.device)
-
-    start_iter = 0
-    if cfg.TRAIN.RESUME is not None:
-        assert osp.exists(cfg.TRAIN.RESUME), "Resume file not found."
-        if accelerator.is_main_process:
-            logger.info(f"Resume checkpoint from {cfg.TRAIN.RESUME}...")
-        with accelerator.main_process_first():
-            state_dict = torch.load(cfg.TRAIN.RESUME, map_location=device)
-        ema_model.load_state_dict(state_dict["ema_state_dict"])
-        if not args.generate_only:
-            accelerator.unwrap_model(model).load_state_dict(state_dict["state_dict"])
-            optimizer.optimizer.load_state_dict(state_dict["optimizer"])
-            lr_scheduler.scheduler.load_state_dict(state_dict["lr_scheduler"])
-            start_iter = state_dict["iter"] + 1
-        del state_dict
-        torch.cuda.empty_cache()
 
     weight_dtype = torch.float32
     if accelerator.mixed_precision == "fp16":
@@ -196,8 +209,8 @@ def main(args):
 
     if args.generate_only:
         unet = accelerator.unwrap_model(model)
-        ema_model.copy_to(unet.parameters())
-        evaluate(cfg, unet, noise_scheduler, device, args.save_file_name)
+        ema_model.copy_to([param for param in unet.parameters() if param.requires_grad])
+        evaluate(cfg, unet, noise_scheduler, device, args.save_file_name, accelerator)
         return
 
     loss_meter = MetricMeter()
@@ -211,26 +224,20 @@ def main(args):
         end = time.time()
         model.train()
         try:
-            if cfg.MODEL.LABEL_DIM > 0:
-                img, label = next(loader)
-            else:
-                img = next(loader)
-                label = None
+            data = next(loader)
         except StopIteration:
             loader = iter(dataloader)
-            if cfg.MODEL.LABEL_DIM > 0:
-                img, label = next(loader)
-            else:
-                img = next(loader)
-                label = None
-        img = img.to(weight_dtype)
+            data = next(loader)
+        img = data["image"]
+        label = data["label"] if data["label"] is not None else None
+        text = data["text"]
 
         t = torch.randint(0, cfg.TRAIN.TIME_STEPS, (img.shape[0],), device=device).long()
         noise = torch.randn_like(img, dtype=weight_dtype)
         noise_data = noise_scheduler.add_noise(img, noise, t)
 
         with accelerator.accumulate(model):
-            pred = model(noise_data, t, class_labels=label)
+            pred = model(noise_data, t, text=text, class_labels=label)
 
             if cfg.TRAIN.NOISE_SCHEDULER.PRED_TYPE == "epsilon":
                 loss = torch.nn.functional.mse_loss(pred.float(), noise.float())
@@ -281,14 +288,12 @@ def main(args):
             torch.save(state_dict, osp.join(cfg.PROJECT_DIR, "checkpoints", save_name))
             logger.info(f"Save checkpoint to {save_name}...")
 
-        if accelerator.is_main_process and (
-            ((cur_iter + 1) % cfg.TRAIN.SAMPLE_INTERVAL == 0) or (cur_iter == max_iter - 1)
-        ):
+        if ((cur_iter + 1) % cfg.TRAIN.SAMPLE_INTERVAL == 0) or (cur_iter == max_iter - 1):
             filename = osp.join(cfg.PROJECT_DIR, "generate", f"iter_{cur_iter+1:03d}.png")
             unet = accelerator.unwrap_model(model)
             ema_model.store(unet.parameters())
-            ema_model.copy_to(unet.parameters())
-            evaluate(cfg, unet, noise_scheduler, device, filename)
+            ema_model.copy_to([param for param in unet.parameters() if param.requires_grad])
+            evaluate(cfg, unet, noise_scheduler, device, filename, accelerator)
             ema_model.restore(unet.parameters())
         accelerator.wait_for_everyone()
 

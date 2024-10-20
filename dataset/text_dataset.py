@@ -51,7 +51,7 @@ class MTTextDataset(torch.utils.data.Dataset):
                 random.shuffle(desp_list)
             desp = "makeup with " + ", ".join(desp_list)
         else:
-            desp = "no or light makeup "
+            desp = "no or light makeup"
 
         desp = self.tokenizer(
             desp,

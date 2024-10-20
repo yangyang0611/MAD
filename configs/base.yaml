@@ -1,3 +1,4 @@
 TRAIN:
   ROOT: ["data/mtdataset/images"]
+  TEXT_LABEL_PATH: "data/mt_text_anno.json"
   MIXED_PRECISION: "fp16"

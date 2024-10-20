@@ -89,8 +89,6 @@ accelerate launch --multi_gpu --num_processes={NUM_OF_GPU} main.py --config conf
 
 * With stable diffusion
 
-> This is the version we used to compare text modification with others for fairness
-
 ```shell
 ./script/train_text_to_image.sh
 ```
@@ -183,8 +181,8 @@ python app.py
 
 ```plaintext
 📦 {PROJECT_ROOT}
-┣ 📂 makeup_checkpoint.pth  # For beautifier, removal, and makeup transfer
-┃ 📂 text_checkpoint.pth    # For text modification
+┣ 📂 makeup_checkpoint.pth  # For our model
+┃ 📂 text_checkpoint.pth    # For SD model
 ┗ ...
 ```
 
