@@ -1,16 +1,12 @@
 import argparse
 import json
 import os
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
-import torch
 from joblib import Parallel, delayed
 from loguru import logger
-from PIL import Image
 from tqdm import tqdm
 
-from config import create_cfg, merge_possible_with_base, show_config
-from modeling import build_model
 from modeling.text_translation import TextTranslationDiffusion
 
 
@@ -23,34 +19,36 @@ def copy_parameters(from_parameters, to_parameters):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default=None, type=str)
     parser.add_argument("--save-folder", default="batch_images", type=str)
     parser.add_argument("--source-root", required=True, type=str)
     parser.add_argument("--source-list", required=True, type=str)
-    parser.add_argument("--source-label", required=True, type=int)
     parser.add_argument("--num-process", default=1, type=int)
     parser.add_argument("--num-of-step", default=180, type=int)
-    parser.add_argument("--opts", nargs=argparse.REMAINDER, default=None, type=str)
+    parser.add_argument("--img-size", default=512, type=int)
+    parser.add_argument("--model-path", default=None, type=str)
+    parser.add_argument("--scheduler", default="ddpm", type=str)
+    parser.add_argument("--sample-steps", default=1000, type=int)
     return parser.parse_args()
 
 
 def generate_image(
-    cfg,
+    img_size: int,
     save_folder: str,
     source_list: List[Tuple[str, str]],
-    source_label: int,
     offset: int,
     device: str,
     num_of_step: int,
+    scheduler: str,
+    sample_steps: int,
+    model_path: Optional[str] = None,
 ):
-    model = build_model(cfg).to(device)
-    if cfg.MODEL.PRETRAINED:
-        logger.info(f"Loading pretrained model from {cfg.MODEL.PRETRAINED}")
-        weight = torch.load(cfg.MODEL.PRETRAINED, map_location=device)
-        copy_parameters(weight["ema_state_dict"]["shadow_params"], model.parameters())
-        del weight
-        torch.cuda.empty_cache()
-    diffuser = TextTranslationDiffusion(cfg, device=device)
+    diffuser = TextTranslationDiffusion(
+        img_size=img_size,
+        scheduler=scheduler,
+        device=device,
+        model_path=model_path,
+        sample_steps=sample_steps,
+    )
     os.makedirs(args.save_folder, exist_ok=True)
 
     progress_bar = tqdm(total=len(source_list), position=int(device.split(":")[-1]))
@@ -65,8 +63,6 @@ def generate_image(
             source_mask = source_mask.replace("jpg", "png")
         try:
             editing_result = diffuser.modify_with_text(
-                model=model,
-                source_label=source_label,
                 image=source_image,
                 mask=source_mask,
                 prompt=[editing_prompt],
@@ -77,9 +73,7 @@ def generate_image(
             logger.error(str(e))
             count_error += 1
             continue
-        save_image = Image.fromarray(
-            (editing_result[0].permute(1, 2, 0).cpu().numpy() * 255).astype("uint8")
-        )
+        save_image = editing_result[0]
         save_image.save(save_image_name)
         progress_bar.update(1)
     progress_bar.close()
@@ -90,12 +84,6 @@ def generate_image(
 
 if __name__ == "__main__":
     args = parse_args()
-    cfg = create_cfg()
-    if args.config:
-        merge_possible_with_base(cfg, args.config)
-    if args.opts:
-        cfg.merge_from_list(args.opts)
-    show_config(cfg)
 
     with open(args.source_list, "r") as f:
         data = json.load(f)
@@ -118,7 +106,6 @@ if __name__ == "__main__":
                     else len(source_list)
                 )
             ],
-            source_label=args.source_label,
             offset=gpu_idx * task_per_process,
             device=f"cuda:{gpu_idx}",
             num_of_step=args.num_of_step,
