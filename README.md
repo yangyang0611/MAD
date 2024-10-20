@@ -149,8 +149,6 @@ python generate_transfer.py \
 
 ### B.4 Text Modification
 
-> Currently support SD-based model only.
-
 For text modification, prepare a JSON file:
 
 ```
