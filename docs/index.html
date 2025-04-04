@@ -115,11 +115,11 @@
             <div class="column has-text-centered">
               <div class="publication-links">
                 <span class="link-block">
-                  <a href="#" class="external-link button is-normal is-rounded is-dark">
+                  <a href="https://arxiv.org/abs/2504.02545" class="external-link button is-normal is-rounded is-dark">
                     <span class="icon">
                       <i class="ai ai-arxiv"></i>
                     </span>
-                    <span>arXiv [WIP]</span>
+                    <span>arXiv</span>
                   </a>
                 </span>
                 <!-- Code Link. -->
@@ -205,7 +205,8 @@
       <img src="static/images/pipeline.svg" , alt="pipeline"
         style=" display: block; margin-left: auto; margin-right: auto;" />
       <br />
-      <p>Illustration of the cross-domain diffusion pipeline for time step <i>t</i>. Initially, the pipeline generates a latent
+      <p>Illustration of the cross-domain diffusion pipeline for time step <i>t</i>. Initially, the pipeline generates a
+        latent
         code representing the source domain, which is subsequently used in the target domain generation to ensure detail
         preservation. During the generation phase, a preserved mask can be applied to maintain non-facial regions or to
         modify specific components.</p>
@@ -246,7 +247,8 @@
         <img src="static/images/text_modification.svg" , alt="text modification"
           style=" display: block; margin-left: auto; margin-right: auto;" />
         <br />
-        <p>Text modification for non-makeup (<strong>top</strong>) and makeup (<strong>bottom</strong>) images. The images on the left
+        <p>Text modification for non-makeup (<strong>top</strong>) and makeup (<strong>bottom</strong>) images. The
+          images on the left
           modify the entire facial region, while those on the right demonstrate modification with a brush mask.</p>
       </div>
     </div>
@@ -258,7 +260,8 @@
       <p>We enhance the MT dataset <a href="#cite-1">[1]</a> with textual annotations. Initial descriptions of makeup
         for
         eyes, face, and lips were generated using GPT-4 Vision, followed by manual verification to
-        correct inaccuracies. Users can get the dataset from <a href="https://github.com/basiclab/MAD/blob/main/data/mt_text_anno.json" target="_blank">here</a>. </p><br />
+        correct inaccuracies. Users can get the dataset from <a
+          href="https://github.com/basiclab/MAD/blob/main/data/mt_text_anno.json" target="_blank">here</a>. </p><br />
       <div class="content is-centered has-text-centered">
         <img src="static/images/text-example.svg" , alt="text annotation"
           style=" display: block; margin-left: auto; margin-right: auto;" /><br />
@@ -282,9 +285,12 @@
   <section class="section" id="BibTeX">
     <div class="container is-max-desktop content">
       <h2 class="title">BibTeX</h2>
-      <pre><code>
-            BobTex
-        </code></pre>
+      <pre><code>@article{ruan2025mad,
+  title={MAD: Makeup All-in-One with Cross-Domain Diffusion Model},
+  author={Ruan, Bo-Kai and Shuai, Hong-Han},
+  journal={arXiv preprint arXiv:2504.02545},
+  year={2025}
+}</code></pre>
     </div>
   </section>
 

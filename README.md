@@ -4,7 +4,8 @@
 
 <p><strong>A unified cross-domain diffusion model for various makeup tasks</strong></p>
 
-<a href="#license-and-citation">
+<a href="https://arxiv.org/abs/2504.02545"><img src="https://img.shields.io/badge/arXiv-2504.02545-<color>"></a>
+<a href="#citation">
   <img alt="License: Apache2.0" src="https://img.shields.io/badge/license-Apache%202.0-blue.svg"/>
 </a><br/><br/>
 
@@ -15,6 +16,7 @@
 > Bo-Kai Ruan, Hong-Han Shuai
 >
 > * Contact: Bo-Kai Ruan
+> * [arXiv paper](https://arxiv.org/abs/2504.02545) | [Project Website](https://basiclab.github.io/MAD)
 
 ## 🚀 A. Installation
 
@@ -185,3 +187,14 @@ python app.py
 ```
 
 ![gradio](assets/gradio.png)
+
+## Citation
+
+```bibtex
+@article{ruan2025mad,
+  title={MAD: Makeup All-in-One with Cross-Domain Diffusion Model},
+  author={Ruan, Bo-Kai and Shuai, Hong-Han},
+  journal={arXiv preprint arXiv:2504.02545},
+  year={2025}
+}
+```
