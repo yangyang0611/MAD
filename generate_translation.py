@@ -13,13 +13,6 @@ from modeling import build_model
 from modeling.translation import TranslationDiffusion
 
 
-def copy_parameters(from_parameters, to_parameters):
-    to_parameters = list(to_parameters)
-    assert len(from_parameters) == len(to_parameters)
-    for s_param, param in zip(from_parameters, to_parameters):
-        param.data.copy_(s_param.to(param.device).data)
-
-
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=None, type=str)
@@ -46,46 +39,42 @@ def generate_image(
 ):
     torch.cuda.set_device(device)
     model = build_model(cfg).to(device)
-    if cfg.MODEL.PRETRAINED:
-        logger.info(f"Loading pretrained model from {cfg.MODEL.PRETRAINED}")
-        weight = torch.load(cfg.MODEL.PRETRAINED, map_location="cpu")
-        copy_parameters(weight["ema_state_dict"]["shadow_params"], model.parameters())
-        del weight
-        torch.cuda.empty_cache()
     model.eval()
 
     diffuser = TranslationDiffusion(cfg, device)
     os.makedirs(args.save_folder, exist_ok=True)
 
-    progress_bar = tqdm(total=len(source_list), position=int(device.split(":")[-1]))
     count_error = 0
-
-    for idx, (source_image, source_mask) in enumerate(source_list):
-        save_image_name = os.path.join(save_folder, f"pred_{idx + offset}.png")
-        if os.path.exists(save_image_name):
-            progress_bar.update(1)
-            continue
-        if source_mask.endswith("jpg"):
-            source_mask = source_mask.replace("jpg", "png")
-        try:
-            transfer_result = diffuser.domain_translation(
-                source_model=model,
-                target_model=model,
-                source_image=source_image,
-                source_class_label=source_label,
-                target_class_label=target_label,
-                parsing_mask=source_mask,
-                start_from_step=num_of_step,
+    with tqdm(
+        total=len(source_list), position=int(device.split(":")[-1])
+    ) as progress_bar:
+        for idx, (source_image, source_mask) in enumerate(source_list):
+            save_image_name = os.path.join(save_folder, f"pred_{idx + offset}.png")
+            if os.path.exists(save_image_name):
+                progress_bar.update(1)
+                continue
+            if source_mask.endswith("jpg"):
+                source_mask = source_mask.replace("jpg", "png")
+            try:
+                transfer_result = diffuser.domain_translation(
+                    source_model=model,
+                    target_model=model,
+                    source_image=source_image,
+                    source_class_label=source_label,
+                    target_class_label=target_label,
+                    parsing_mask=source_mask,
+                    start_from_step=num_of_step,
+                )
+            except Exception as e:
+                logger.error(str(e))
+                count_error += 1
+                continue
+            save_image = Image.fromarray(
+                (transfer_result[0].permute(1, 2, 0).cpu().numpy() * 255).astype(
+                    "uint8"
+                )
             )
-        except Exception as e:
-            logger.error(str(e))
-            count_error += 1
-            continue
-        save_image = Image.fromarray(
-            (transfer_result[0].permute(1, 2, 0).cpu().numpy() * 255).astype("uint8")
-        )
-        save_image.save(save_image_name)
-    progress_bar.close()
+            save_image.save(save_image_name)
 
     if count_error != 0:
         print(f"Error in {device}: {count_error}")
@@ -114,8 +103,7 @@ if __name__ == "__main__":
             cfg,
             args.save_folder,
             source_list=source_list[
-                gpu_idx
-                * task_per_process : (
+                gpu_idx * task_per_process : (
                     ((gpu_idx + 1) * task_per_process)
                     if gpu_idx < args.num_process - 1
                     else len(source_list)
@@ -129,3 +117,4 @@ if __name__ == "__main__":
         )
         for gpu_idx in range(args.num_process)
     )
+

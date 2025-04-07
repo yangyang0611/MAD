@@ -3,6 +3,7 @@ import torch
 import xformers.ops
 from diffusers import UNet2DConditionModel
 from einops import rearrange
+from packaging import version
 from torch.nn.functional import silu
 from transformers import CLIPTextModel
 from xformers.ops import (
@@ -115,7 +116,11 @@ class Conv2d(torch.nn.Module):
     def forward(self, x):
         w = self.weight.to(x.dtype) if self.weight is not None else None
         b = self.bias.to(x.dtype) if self.bias is not None else None
-        f = self.resample_filter.to(x.dtype) if self.resample_filter is not None else None
+        f = (
+            self.resample_filter.to(x.dtype)
+            if self.resample_filter is not None
+            else None
+        )
         w_pad = w.shape[-1] // 2 if w is not None else 0
         f_pad = (f.shape[-1] - 1) // 2 if f is not None else 0
         # w_pad, f_pad = int(w_pad), int(f_pad) # for flops calculation
@@ -132,7 +137,10 @@ class Conv2d(torch.nn.Module):
         elif self.fused_resample and self.down and w is not None:
             x = torch.nn.functional.conv2d(x, w, padding=w_pad + f_pad)
             x = torch.nn.functional.conv2d(
-                x, f.tile([self.out_channels, 1, 1, 1]), groups=self.out_channels, stride=2
+                x,
+                f.tile([self.out_channels, 1, 1, 1]),
+                groups=self.out_channels,
+                stride=2,
             )
         else:
             if self.up:
@@ -193,7 +201,9 @@ class AttentionOp(torch.autograd.Function):
     def forward(ctx, q, k):
         w = (
             torch.einsum(
-                "ncq,nck->nqk", q.to(torch.float32), (k / np.sqrt(k.shape[1])).to(torch.float32)
+                "ncq,nck->nqk",
+                q.to(torch.float32),
+                (k / np.sqrt(k.shape[1])).to(torch.float32),
             )
             .softmax(dim=2)
             .to(q.dtype)
@@ -210,8 +220,12 @@ class AttentionOp(torch.autograd.Function):
             dim=2,
             input_dtype=torch.float32,
         )
-        dq = torch.einsum("nck,nqk->ncq", k.to(torch.float32), db).to(q.dtype) / np.sqrt(k.shape[1])
-        dk = torch.einsum("ncq,nqk->nck", q.to(torch.float32), db).to(k.dtype) / np.sqrt(k.shape[1])
+        dq = torch.einsum("nck,nqk->ncq", k.to(torch.float32), db).to(
+            q.dtype
+        ) / np.sqrt(k.shape[1])
+        dk = torch.einsum("ncq,nqk->nck", q.to(torch.float32), db).to(
+            k.dtype
+        ) / np.sqrt(k.shape[1])
         return dq, dk
 
 
@@ -219,7 +233,9 @@ def get_xformers_flash_attention_op(q, k, v):
     try:
         flash_attention_op = MemoryEfficientAttentionFlashAttentionOp
         fw, bw = flash_attention_op
-        if fw.supports(xformers.ops.fmha.Inputs(query=q, key=k, value=v, attn_bias=None)):
+        if fw.supports(
+            xformers.ops.fmha.Inputs(query=q, key=k, value=v, attn_bias=None)
+        ):
             return flash_attention_op
     except Exception as e:
         print("loading flash attention fail.", str(e))
@@ -263,7 +279,9 @@ class UNetBlock(torch.nn.Module):
         self.num_heads = (
             0
             if not attention
-            else num_heads if num_heads is not None else out_channels // channels_per_head
+            else num_heads
+            if num_heads is not None
+            else out_channels // channels_per_head
         )
         self.dropout = dropout
         self.skip_scale = skip_scale
@@ -312,7 +330,10 @@ class UNetBlock(torch.nn.Module):
                 **(init_attn if init_attn is not None else init),
             )
             self.proj = Conv2d(
-                in_channels=out_channels, out_channels=out_channels, kernel=1, **init_zero
+                in_channels=out_channels,
+                out_channels=out_channels,
+                kernel=1,
+                **init_zero,
             )
 
     def forward(self, x, emb):
@@ -326,19 +347,24 @@ class UNetBlock(torch.nn.Module):
         else:
             x = silu(self.norm1(x.add_(params)))
 
-        x = self.conv1(torch.nn.functional.dropout(x, p=self.dropout, training=self.training))
+        x = self.conv1(
+            torch.nn.functional.dropout(x, p=self.dropout, training=self.training)
+        )
         x = x.add_(self.skip(orig) if self.skip is not None else orig)
         x = x * self.skip_scale
 
         if self.num_heads:
             q, k, v = (
                 self.qkv(self.norm2(x))
-                .reshape(x.shape[0] * self.num_heads, x.shape[1] // self.num_heads, 3, -1)
+                .reshape(
+                    x.shape[0] * self.num_heads, x.shape[1] // self.num_heads, 3, -1
+                )
                 .unbind(2)
             )
             if self.eff_attn:  # add mea for around 15% cost reduction
                 q, k, v = map(
-                    lambda t: rearrange(t, "(b h) d n -> b n h d", h=self.num_heads), (q, k, v)
+                    lambda t: rearrange(t, "(b h) d n -> b n h d", h=self.num_heads),
+                    (q, k, v),
                 )
                 q, k, v = q.contiguous(), k.contiguous(), v.contiguous()
                 out = memory_efficient_attention(q, k, v)
@@ -407,7 +433,12 @@ class DhariwalUNet(torch.nn.Module):
         label_dim=0,  # Number of class labels, 0 = unconditional.
         augment_dim=0,  # Augmentation label dimensionality, 0 = no augmentation.
         model_channels=192,  # Base multiplier for the number of channels.
-        channel_mult=[1, 2, 3, 4],  # Per-resolution multipliers for the number of channels.
+        channel_mult=[
+            1,
+            2,
+            3,
+            4,
+        ],  # Per-resolution multipliers for the number of channels.
         channel_mult_emb=4,  # Multiplier for the dimensionality of the embedding vector.
         num_blocks=3,  # Number of residual blocks per resolution.
         attn_resolutions=[32, 16, 8],  # List of resolutions with self-attention.
@@ -419,7 +450,9 @@ class DhariwalUNet(torch.nn.Module):
         self.label_dropout = label_dropout
         emb_channels = model_channels * channel_mult_emb
         init = dict(
-            init_mode="kaiming_uniform", init_weight=np.sqrt(1 / 3), init_bias=np.sqrt(1 / 3)
+            init_mode="kaiming_uniform",
+            init_weight=np.sqrt(1 / 3),
+            init_bias=np.sqrt(1 / 3),
         )
         init_zero = dict(init_mode="kaiming_uniform", init_weight=0, init_bias=0)
         block_kwargs = dict(
@@ -435,12 +468,21 @@ class DhariwalUNet(torch.nn.Module):
         self.label_dim = label_dim
         self.map_noise = PositionalEmbedding(num_channels=model_channels)
         self.map_augment = (
-            Linear(in_features=augment_dim, out_features=model_channels, bias=False, **init_zero)
+            Linear(
+                in_features=augment_dim,
+                out_features=model_channels,
+                bias=False,
+                **init_zero,
+            )
             if augment_dim
             else None
         )
-        self.map_layer0 = Linear(in_features=model_channels, out_features=emb_channels, **init)
-        self.map_layer1 = Linear(in_features=emb_channels, out_features=emb_channels, **init)
+        self.map_layer0 = Linear(
+            in_features=model_channels, out_features=emb_channels, **init
+        )
+        self.map_layer1 = Linear(
+            in_features=emb_channels, out_features=emb_channels, **init
+        )
         self.map_label = (
             Linear(
                 in_features=label_dim,
@@ -504,7 +546,9 @@ class DhariwalUNet(torch.nn.Module):
                     **block_kwargs,
                 )
         self.out_norm = GroupNorm(num_channels=cout)
-        self.out_conv = Conv2d(in_channels=cout, out_channels=out_channels, kernel=3, **init_zero)
+        self.out_conv = Conv2d(
+            in_channels=cout, out_channels=out_channels, kernel=3, **init_zero
+        )
 
     def forward(self, x, noise_labels, class_labels=None, augment_labels=None):
         # Mapping.
@@ -525,9 +569,9 @@ class DhariwalUNet(torch.nn.Module):
         if self.map_label is not None:
             tmp = class_labels
             if self.training and self.label_dropout:
-                tmp = tmp * (torch.rand([x.shape[0], 1], device=x.device) >= self.label_dropout).to(
-                    tmp.dtype
-                )
+                tmp = tmp * (
+                    torch.rand([x.shape[0], 1], device=x.device) >= self.label_dropout
+                ).to(tmp.dtype)
             emb = emb + self.map_label(tmp)
         emb = silu(emb)
 
@@ -578,22 +622,31 @@ class DiffuserTextModel(torch.nn.Module):
 
 def build_diffuser_model(cfg):
     layer_scale = [cfg.MODEL.BASE_DIM * scale for scale in cfg.MODEL.LAYER_SCALE]
-    unet = UNet2DConditionModel(
-        sample_size=cfg.TRAIN.IMAGE_SIZE,
-        in_channels=cfg.MODEL.IN_CHANNELS,
-        out_channels=cfg.MODEL.OUT_CHANNELS,
-        layers_per_block=cfg.MODEL.LAYERS_PER_BLOCK,
-        cross_attention_dim=768,
-        block_out_channels=layer_scale,
-        down_block_types=cfg.MODEL.DOWN_BLOCK_TYPE,
-        up_block_types=cfg.MODEL.UP_BLOCK_TYPE,
-        class_embed_type="simple_projection" if cfg.MODEL.LABEL_DIM is not None else None,
-        projection_class_embeddings_input_dim=cfg.MODEL.LABEL_DIM,
-    )
-    unet.enable_xformers_memory_efficient_attention()
+    if cfg.MODEL.PRETRAINED:
+        unet = UNet2DConditionModel.from_pretrained(
+            cfg.MODEL.PRETRAINED, subfolder="unet"
+        )
+    else:
+        unet = UNet2DConditionModel(
+            sample_size=cfg.TRAIN.IMAGE_SIZE,
+            in_channels=cfg.MODEL.IN_CHANNELS,
+            out_channels=cfg.MODEL.OUT_CHANNELS,
+            layers_per_block=cfg.MODEL.LAYERS_PER_BLOCK,
+            cross_attention_dim=768,
+            block_out_channels=layer_scale,
+            down_block_types=cfg.MODEL.DOWN_BLOCK_TYPE,
+            up_block_types=cfg.MODEL.UP_BLOCK_TYPE,
+            class_embed_type="simple_projection"
+            if cfg.MODEL.LABEL_DIM is not None
+            else None,
+            projection_class_embeddings_input_dim=cfg.MODEL.LABEL_DIM,
+        )
     text_encoder = CLIPTextModel.from_pretrained(
         "CompVis/stable-diffusion-v1-4", subfolder="text_encoder"
     )
+
+    if version.parse(torch.__version__) < version.parse("2.0.0"):
+        unet.enable_xformers_memory_efficient_attention()
 
     return DiffuserTextModel(unet, text_encoder)
 
@@ -614,23 +667,3 @@ def build_model(cfg):
         eff_attn=True,
     )
 
-
-if __name__ == "__main__":
-    from config import create_cfg, merge_possible_with_base
-
-    cfg = create_cfg()
-    merge_possible_with_base(cfg, "configs/makeup.yaml")
-
-    model = build_model(cfg)
-
-    # weight = torch.load("weight.pkl")
-    # model.load_state_dict(weight["net"].model.state_dict())
-
-    # new_state_dict = {
-    #     "ema": weight["ema"].model.state_dict(),
-    #     "model": weight["net"].model.state_dict(),
-    # }
-    test_tensor = torch.randn(2, 3, 256, 256)
-    time_embed = torch.randint(0, 1000, (2,))
-    out = model(test_tensor, time_embed)
-    print(out.shape)

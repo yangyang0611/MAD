@@ -13,13 +13,6 @@ from modeling import build_model
 from modeling.translation import TranslationDiffusion
 
 
-def copy_parameters(from_parameters, to_parameters):
-    to_parameters = list(to_parameters)
-    assert len(from_parameters) == len(to_parameters)
-    for s_param, param in zip(from_parameters, to_parameters):
-        param.data.copy_(s_param.to(param.device).data)
-
-
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=None, type=str)
@@ -51,20 +44,12 @@ def generate_image(
 ):
     torch.cuda.set_device(device)
     model = build_model(cfg).to(device)
-    if cfg.MODEL.PRETRAINED:
-        logger.info(f"Loading pretrained model from {cfg.MODEL.PRETRAINED}")
-        weight = torch.load(cfg.MODEL.PRETRAINED, map_location=device)
-        copy_parameters(weight["ema_state_dict"]["shadow_params"], model.parameters())
-        del weight
-        torch.cuda.empty_cache()
     model.eval()
 
     diffuser = TranslationDiffusion(cfg, device)
     os.makedirs(args.save_folder, exist_ok=True)
 
-    progress_bar = tqdm(total=len(source_list), position=int(device.split(":")[-1]))
     count_error = 0
-
     with tqdm(total=len(source_list), position=int(device.split(":")[-1])) as progress_bar:
         for idx, ((source_image, source_mask), (target_image, target_mask)) in enumerate(
             zip(source_list, target_list)

@@ -35,7 +35,9 @@ class TextTranslationDiffusion:
     def __init__(self, img_size, scheduler, device, model_path=None, sample_steps=1000):
         # Finetuned from "runwayml/stable-diffusion-v1-5"
         if model_path is not None:
-            unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(f"{model_path}/unet")
+            unet: UNet2DConditionModel = UNet2DConditionModel.from_pretrained(
+                model_path, subfolder="unet_text"
+            )
             pipe = StableDiffusionPipeline.from_pretrained(
                 "runwayml/stable-diffusion-v1-5", unet=unet
             )
