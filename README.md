@@ -77,6 +77,8 @@ We also provide the labeling text dataset [here](data/mt_text_anno.json).
 
 ## 📦 B. Usage
 
+The pretrained weight is uploaded to [Hugging Face](https://huggingface.co/Justin900/MAD) 🤗.
+
 ### B.1 Training a Model
 
 * With our model
@@ -117,7 +119,7 @@ python generate_translation.py \
     --source-label 0 \
     --target-label 1 \
     --num-process {NUM_PROCESS} \
-    --opts MODEL.PRETRAINED {MODEL_WEIGHTS}
+    --opts MODEL.PRETRAINED Justin900/MAD
 ```
 
 ### B.3 Makeup Transfer
@@ -146,7 +148,7 @@ python generate_transfer.py \
     --num-process {NUM_PROCESS} \
     --inpainting \
     --cam \
-    --opts MODEL.PRETRAINED {MODEL_WEIGHTS}
+    --opts MODEL.PRETRAINED Justin900/MAD
 ```
 
 ### B.4 Text Modification
@@ -166,7 +168,7 @@ python generate_text_editing.py \
     --source-root data/mtdataset/images \
     --source-list assets/text_editing.json \
     --num-process {NUM_PROCESS} \
-    --model-path {MODEL_WEIGHTS}
+    --model-path Justin900/MAD
 ```
 
 ## 🎨 C. Web UI (Beta)
