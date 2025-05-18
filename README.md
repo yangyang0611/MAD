@@ -70,7 +70,7 @@ We recommend unzipping and placing the datasets in the same folder with the foll
 Run `misc/convert_beauty_face.py` to convert the parsing maps for the BeautyFace dataset:
 
 ```shell
-python misc/convert_beauty_face.py --original data/beautyface/parsing --output data/beautyface/parsing
+python misc/convert_beauty_face.py --original data/beautyface/parsing --sace_path data/beautyface/parsing
 ```
 
 We also provide the labeling text dataset [here](data/mt_text_anno.json).
